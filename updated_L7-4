@@ -642,6 +642,7 @@ if flagSav
 end
 % toc
 return
+%EF#1
 % Switch to PA mode callback
 function SwitchToPAModeCallback
     isPhotoacousticMode = true;  % Enable PA mode
