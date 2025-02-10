@@ -8,7 +8,7 @@ tempFrameUs = [];
 tempFramePa = [];
 UsFileName = [];
 PaFileName = [];
-isPhotoacousticMode = false;
+
 savCurrentFrameFlag = 0;
 
 currentFrameImagP = [];
@@ -51,9 +51,6 @@ Resource.Parameters.simulateMode = 0;
 Trans.name = 'L7-4';
 % Trans.name = 'L22-14v';
 Trans.units = 'mm'; % Explicit declaration avoids warning message when selected by default
-if ~isfield(Trans, 'numelements') || ~isfield(Trans, 'spacing')
-    error('Transducer configuration failed. Ensure computeTrans is correctly initialized.');
-end
 Trans = computeTrans(Trans);  % L7-4 transducer is 'known' transducer so we can use computeTrans.
 % note nominal center frequency from computeTrans is 6.25 MHz
 Trans.maxHighVoltage = 50;  % set maximum high voltage limit for pulser supply.
@@ -109,30 +106,28 @@ TW(1).Parameters = [Trans.frequency,0.67,2,1];
 
 % Specify nr TX structure arrays. Transmit centered on element n in the array for event n.
 TX = repmat(struct('waveform', 1, ...
-                   'Origin', [0.0, 0.0, 0.0], ...
+                   'Origin', [0.0,0.0,0.0], ...
                    'focus', P.txFocus, ...
-                   'Steer', [0.0, 0.0], ...
-                   'Apod', zeros(1, Trans.numelements), ... % Initialize Apod to 0
-                   1, 128));
-
+                   'Steer', [0.0,0.0], ...
+                   'Apod', zeros(1,Trans.numelements), ...
+                   'Delay', zeros(1,Trans.numelements)), 1, 128);          
 % - Set event specific TX attributes.
 for n = 1:128   % 128 transmit events
     % Set transmit Origins to positions of elements.
-    TX(n).Origin = [(-63.5 + (n-1)) * Trans.spacing, 0.0, 0.0];
+    TX(n).Origin = [(-63.5 + (n-1))*Trans.spacing, 0.0, 0.0];
     % Set transmit Apodization.
-    if ~isPhotoacousticMode  % Enable TX pulses only in US mode
-        lft = n - floor(P.numTx / 2);
-        if lft < 1, lft = 1; end
-        rt = n + floor(P.numTx / 2);
-        if rt > Trans.numelements, rt = Trans.numelements; end
-        TX(n).Apod(lft:rt) = 1.0;
-    end
+    lft = n - floor(P.numTx/2);
+    if lft < 1, lft = 1; end;
+    rt = n + floor(P.numTx/2);
+    if rt > Trans.numelements, rt = Trans.numelements; end;
+    TX(n).Apod(lft:rt) = 1.0;
     TX(n).Delay = computeTXDelays(TX(n));
 end
 
 % Specify Receive structure arrays. 
 % - We need 128 Receives for every frame.
 maxAcqLength = ceil(sqrt(P.endDepth^2 + ((Trans.numelements-1)*Trans.spacing)^2));
+wlsPer128 = 128/(2*2); % wavelengths in 128 samples for 2 samplesPerWave
 Receive = repmat(struct('Apod', ones(1,Trans.numelements), ...
                         'startDepth', P.startDepth, ...
                         'endDepth', maxAcqLength, ...
@@ -140,20 +135,16 @@ Receive = repmat(struct('Apod', ones(1,Trans.numelements), ...
                         'bufnum', 1, ...
                         'framenum', 1, ...
                         'acqNum', 1, ...
-                        'sampleMode', 'NS200BW', ...
+                        'sampleMode', 'NS200BW',...
                         'mode', 0, ...
                         'callMediaFunc', 0), 1, 128*Resource.RcvBuffer(1).numFrames);
-
 % - Set event specific Receive attributes.
 for i = 1:Resource.RcvBuffer(1).numFrames
     k = 128*(i-1);
+    Receive(k+1).callMediaFunc = 1;
     for j = 1:128
         Receive(k+j).framenum = i;
         Receive(k+j).acqNum = j;
-        Receive(k+1).callMediaFunc = 1;
-        if isPhotoacousticMode  % Adjust receive parameters for PA mode
-            Receive(k+j).TGC = 2;  % Use a different TGC for PA
-        end
     end
 end
 
@@ -211,14 +202,8 @@ Process(2).method = 'ImgSave';
 Process(2).Parameters = {'srcbuffer','image',... % name of buffer to process.
     'srcbufnum',1,...
     'srcframenum',-1,... % process the most recent frame.
-    'dstbuffer','disk'};
-% External Processing - PA Display and Save Frame
-Process(3).classname = 'External';
-Process(3).method = 'PaDisplaySave';
-Process(3).Parameters = {'srcbuffer','image',... % name of buffer to process.
-    'srcbufnum',2,...
-    'srcframenum',-1,... % process the most recent frame.
     'dstbuffer','none'};
+
 
 % Specify SeqControl structure arrays.
 % add ext trigger control here
@@ -228,17 +213,17 @@ SeqControl(1).condition = 'extTrigger';
 SeqControl(1).argument = 17; % Trigger input 1, enable with rising edge 
 % noop delay between trigger in and start of acquisition
 SeqControl(2).command = 'noop';
-SeqControl(2).argument = fix(100)*5; % noop counts are in 0.2 microsec increments
+SeqControl(2).argument = fix(0)*5; % noop counts are in 0.2 microsec increments
 % SeqControl(13).argument = 3*5; % noop counts are in 0.2 microsec increments
 % SeqControl(13).argument = 1e3; % noop counts are in 0.2 microsec increments
 % sync command
 SeqControl(3).command = 'sync';
-SeqControl(3).argument = 5e6;   % timeout for waiting ext trigger
+SeqControl(3).argument = 2e9;   % timeout for waiting ext trigger
 
 %  - Time between acquisitions in usec
 t1 = round(2*384*(1/Trans.frequency)); % acq. time in usec for max depth
 SeqControl(4).command = 'timeToNextAcq';
-SeqControl(4).argument = max(t1,100);
+SeqControl(4).argument = t1;
 %  - Time between frames at 20 fps at max endDepth.
 SeqControl(5).command = 'timeToNextAcq';
 SeqControl(5).argument = 50000; 
@@ -252,31 +237,27 @@ nsc = 8; % next SeqControl number
 % Specify Event structure arrays.
 n = 1;
 for i = 1:Resource.RcvBuffer(1).numFrames
-    % Wait for input trigger from flash lamp firing (for PA mode)
-    if isPhotoacousticMode
-        Event(n).info = 'Wait for PA Trigger';
-        Event(n).tx = 0;        % no TX
-        Event(n).rcv = 0;       % no Rcv
-        Event(n).recon = 0;     % no Recon
-        Event(n).process = 0;   % no Process
-        Event(n).seqControl = 1; % Trigger in
-        n = n+1;
-    end
+    
+    % Wait for input trigger from flash lamp firing
+    Event(n).info = 'Wait for Trigger IN';
+    Event(n).tx = 0;        % no TX
+    Event(n).rcv = 0;       % no Rcv
+    Event(n).recon = 0;     % no Recon
+    Event(n).process = 0;   % no Process
+    Event(n).seqControl = 1; % Trigger in
+    n = n+1;
+    
+    % Pause for optical buildup
+    Event(n).info = 'noop and sync';
+    Event(n).tx = 0;        % no TX
+    Event(n).rcv = 0;       % no Rcv
+    Event(n).recon = 0;     % no Recon
+    Event(n).process = 0;   % no Process
+    Event(n).seqControl = [2,3]; % pause and sync
+    n = n+1;
 
-    % Pause for optical buildup (for PA mode)
-    if isPhotoacousticMode
-        Event(n).info = 'noop and sync';
-        Event(n).tx = 0;        % no TX
-        Event(n).rcv = 0;       % no Rcv
-        Event(n).recon = 0;     % no Recon
-        Event(n).process = 0;   % no Process
-        Event(n).seqControl = [2,3]; % pause and sync
-        n = n+1;
-    end
-
-    % Acquire frame
-    for j = 1:128
-        Event(n).info = 'Acquisition';
+    for j = 1:128                      % Acquire frame
+        Event(n).info = 'Aqcuisition.';
         Event(n).tx = j;   % use next TX structure.
         Event(n).rcv = 128*(i-1)+j;   
         Event(n).recon = 0;      % no reconstruction.
@@ -284,51 +265,36 @@ for i = 1:Resource.RcvBuffer(1).numFrames
         Event(n).seqControl = 4; % seqCntrl
         n = n+1;
     end
-
     % Replace last events SeqControl for inter-frame timeToNextAcq.
-    Event(n-1).seqControl = 5;
-
-    % Transfer frame to host
-    Event(n).info = 'Transfer frame to host';
+   Event(n-1).seqControl = 5;
+    
+    Event(n).info = 'Transfer frame to host.';
     Event(n).tx = 0;        % no TX
     Event(n).rcv = 0;       % no Rcv
     Event(n).recon = 0;     % no Recon
     Event(n).process = 0; 
     Event(n).seqControl = nsc; 
-    SeqControl(nsc).command = 'transferToHost'; % transfer frame to host buffer
-    SeqControl(nsc).argument = 1;
-    nsc = nsc+1;
+       SeqControl(nsc).command = 'transferToHost'; % transfer frame to host buffer
+       nsc = nsc+1;
     n = n+1;
 
-    % Reconstruct and process
-    Event(n).info = 'Reconstruct and process';
+    Event(n).info = 'recon and process'; 
     Event(n).tx = 0;         % no transmit
     Event(n).rcv = 0;        % no rcv
     Event(n).recon = 1;      % reconstruction
     Event(n).process = 1;    % process
     Event(n).seqControl = 0;
     n = n + 1;
-
-    % Display and save
-    if isPhotoacousticMode
-        Event(n).info = 'PA Display and Save';
-        Event(n).tx = 0;         % no transmit
-        Event(n).rcv = 0;        % no rcv
-        Event(n).recon = 0;      % no reconstruction
-        Event(n).process = 3;    % process PA
-        Event(n).seqControl = 0; % no seqCntrl
-    else
-        Event(n).info = 'US Display and Save';
-        Event(n).tx = 0;         % no transmit
-        Event(n).rcv = 0;        % no rcv
-        Event(n).recon = 0;      % no reconstruction
-        Event(n).process = 2;    % process US
-        Event(n).seqControl = 0; % no seqCntrl
-    end
-    n = n+1;
-
-    % Exit to Matlab every 10th frame
-    if mod(i,10) == 0 && (i ~= Resource.RcvBuffer(1).numFrames)
+    
+    %  Display & Sav   
+    Event(n).info = 'US sav'; 
+    Event(n).tx = 0;         % no transmit
+    Event(n).rcv = 0;        % no rcv
+    Event(n).recon = 0;  % reconstruction for both 2D and PA
+    Event(n).process = 2;    % process 2D
+    Event(n).seqControl = 0; % no seqCntrl
+    
+    if (floor(i/5) == i/5)&&(i ~= Resource.RcvBuffer(1).numFrames)  % Exit to Matlab every 5th frame
         Event(n).seqControl = 6; % return to Matlab
     end
     n = n+1;
@@ -359,7 +325,7 @@ if isfield(Resource.DisplayWindow(1),'AxesUnits')&&~isempty(Resource.DisplayWind
     end
 end
 UI(2).Control = {'UserA1','Style','VsSlider','Label',['Range (',AxesUnit,')'],...
-                 'SliderMinMaxVal',[64,min(300,P.endDepth)]*wls2mm,'SliderStep',[0.1,0.2],'ValueFormat','%3.0f'};
+                 'SliderMinMaxVal',[64,300,P.endDepth]*wls2mm,'SliderStep',[0.1,0.2],'ValueFormat','%3.0f'};
 UI(2).Callback = text2cell('%RangeChangeCallback');
              
 % - Transmit focus change
@@ -375,9 +341,7 @@ UI(4).Callback = text2cell('%FNumCallback');
 % - UI save push button for current frame - Lu
 UI(5).Control = {'UserC3','Style','VsPushButton','Label','Save CurrentFrame'};
 UI(5).Callback = text2cell('%-UI#5Callback');
-% - UI to switch to PA mode
-UI(6).Control = {'UserC1', 'Style', 'VsPushButton', 'Label', 'Switch to PA'};
-UI(6).Callback = text2cell('%SwitchToPAModeCallback');
+
 %% PA Recon Parameter Cal and Set
 NoElem = 64;
 % [ImgDepthAxis, xAxis, zAxis, ApertureAxis] = myPA_ReconParameterCal_v307(NoElem);
@@ -517,8 +481,10 @@ assignin('base','P',P);
 TX = evalin('base', 'TX');
 for n = 1:128   % 128 transmit events
     % Set transmit Apodization.
-    lft = max(n - floor(P.numTx/2), 1);
-    rt = min(n + floor(P.numTx/2), Trans.numelements);
+    lft = n - floor(P.numTx/2);
+    if lft < 1, lft = 1; end;
+    rt = n + floor(P.numTx/2);
+    if rt > Trans.numelements, rt = Trans.numelements; end;
     TX(n).Apod = zeros(1,Trans.numelements);
     TX(n).Apod(lft:rt) = 1.0;
     TX(n).Delay = computeTXDelays(TX(n));
@@ -642,47 +608,4 @@ if flagSav
 end
 % toc
 return
-% Switch to PA mode callback
-function SwitchToPAModeCallback
-    isPhotoacousticMode = true;  % Enable PA mode
-    assignin('base', 'isPhotoacousticMode', isPhotoacousticMode);
-    disp('Switched to Photoacoustic Mode');
-
-    % Disable TX pulses in PA mode
-    TX = evalin('base', 'TX');
-    for n = 1:128
-        TX(n).Apod = zeros(1, Trans.numelements);  % No Apodization (No active TX in PA)
-    end
-    assignin('base', 'TX', TX);
-end
-
-% PA Display and Save function
-function PaDisplaySave(RData)
-    % Display and save PA data
-    r = evalin('base', 'Us_zAxisNum');
-    c = evalin('base', 'Us_xAxisNum');
-    rAxis = evalin('base', 'Us_zAxis');
-    cAxis = evalin('base', 'Us_xAxis');
-    PAMat = RData(1:r, 1:c);
-
-    % Display PA image
-    figure('Name', 'PA Image');
-    imagesc(cAxis, rAxis, log(PAMat / max(PAMat(:))));
-    colormap hot;
-    colorbar;
-    axis equal;
-    axis tight;
-
-    % Save PA data
-    flagSav = evalin('base', 'flagSav');
-    frameNo = evalin('base', 'frameNo');
-    NumFrames2Sav = evalin('base', 'NumFrames2Sav');
-
-    if flagSav && frameNo <= NumFrames2Sav
-        temp = single(PAMat);
-        assignin('base', 'tempFrame', temp);
-        dest_offset = r * c * (frameNo - 1);
-        evalin('base', ['MatrixOffsetAppend(tempFramePa, tempFrame, ', num2str(dest_offset), ');']);
-        assignin('base', 'frameNo', frameNo + 1);
-    end
-end
+%EF#1
