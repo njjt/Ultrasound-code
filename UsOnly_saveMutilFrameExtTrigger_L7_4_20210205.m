@@ -208,9 +208,8 @@ Process(2).Parameters = {'srcbuffer','image',... % name of buffer to process.
 % Specify SeqControl structure arrays.
 % add ext trigger control here
 % input trigger 
-SeqControl(1).command = 'pause';
-SeqControl(1).condition = 'extTrigger';
-SeqControl(1).argument = 17; % Trigger input 1, enable with rising edge 
+SeqControl(1).command = 'noop';
+SeqControl(1).argument = 0; % Trigger input 1, enable with rising edge 
 % noop delay between trigger in and start of acquisition
 SeqControl(2).command = 'noop';
 SeqControl(2).argument = fix(0)*5; % noop counts are in 0.2 microsec increments
@@ -239,9 +238,9 @@ n = 1;
 for i = 1:Resource.RcvBuffer(1).numFrames
     
     % Wait for input trigger from flash lamp firing
-    Event(n).info = 'Wait for Trigger IN';
-    Event(n).tx = 0;        % no TX
-    Event(n).rcv = 0;       % no Rcv
+    Event(n).info = 'Start Acquisition';
+    Event(n).tx = 1;        % no TX
+    Event(n).rcv = 1;       % no Rcv
     Event(n).recon = 0;     % no Recon
     Event(n).process = 0;   % no Process
     Event(n).seqControl = 1; % Trigger in
