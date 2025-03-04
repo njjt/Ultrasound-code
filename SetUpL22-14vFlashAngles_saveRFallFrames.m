@@ -317,7 +317,7 @@ EF(1).Function = text2cell('%saveRFallFrames');
 frameRateFactor = 680;
 
 % Save all the structures to a .mat file.
-filename = 'L12-5_38mmFlashAngles_saveRFallFrame';
+filename = 'L22-14vFlashAngles_saveRFallFrame';
 save(['MatFiles/',filename]);
 VSX;
 
